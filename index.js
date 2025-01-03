@@ -28,7 +28,7 @@ exports.loadPackage = async function (gridController, persistedData) {
 
   let spotifyIconSvg = fs.readFileSync(
     path.resolve(__dirname, "spotify-logo-black.svg"),
-    { encoding: "utf-8" }
+    { encoding: "utf-8" },
   );
 
   if (persistedData) {
@@ -257,7 +257,7 @@ async function authorizeSpotify() {
         };
         const body = await fetch(
           "https://accounts.spotify.com/api/token",
-          payload
+          payload,
         );
         const response = await body.json();
         if (response.access_token) {
