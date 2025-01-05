@@ -33,7 +33,7 @@ exports.loadPackage = async function (gridController, persistedData) {
 
   if (persistedData) {
     spotifyApi.setAccessToken(persistedData.accessToken);
-    spotifyApi.resetRefreshToken(persistedData.refreshToken);
+    spotifyApi.setRefreshToken(persistedData.refreshToken);
     try {
       let me = await spotifyApi.getMe();
       userEmail = me.body.email;
