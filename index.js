@@ -21,6 +21,8 @@ const spotifyApi = new SpotifyWebApi({
   redirectUri: redirectUri,
 });
 let userEmail = "";
+let refreshTokenIntervalId;
+
 let actionId = 0;
 
 exports.loadPackage = async function (gridController, persistedData) {
@@ -32,12 +34,13 @@ exports.loadPackage = async function (gridController, persistedData) {
   );
 
   if (persistedData) {
-    spotifyApi.setAccessToken(persistedData.accessToken);
     spotifyApi.setRefreshToken(persistedData.refreshToken);
     try {
+      await refreshSpotifyToken();
       let me = await spotifyApi.getMe();
       userEmail = me.body.email;
       notifyPreference();
+      refreshTokenIntervalId = setInterval(refreshSpotifyToken, 1000 * 60 * 50);
     } catch (e) {
       console.error(e);
     }
@@ -90,6 +93,7 @@ exports.loadPackage = async function (gridController, persistedData) {
 };
 
 exports.unloadPackage = async function () {
+  clearInterval(refreshTokenIntervalId);
   while (--actionId >= 0) {
     controller.sendMessageToEditor({
       type: "remove-action",
@@ -192,6 +196,7 @@ async function onMessage(port, data) {
   }
   if (data.type === "logout-user") {
     spotifyApi.resetCredentials();
+    clearInterval(refreshTokenIntervalId);
     userEmail = "";
     controller.sendMessageToEditor({
       type: "persist-data",
@@ -208,6 +213,33 @@ function notifyPreference() {
     type: "status",
     email: userEmail,
   });
+}
+
+async function refreshSpotifyToken() {
+  let refreshToken = spotifyApi.getRefreshToken();
+  const payload = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
+  };
+  const body = await fetch("https://accounts.spotify.com/api/token", payload);
+  const response = await body.json();
+  spotifyApi.setAccessToken(response.access_token);
+  if (response.refresh_token) {
+    spotifyApi.setRefreshToken(response.refresh_token);
+    controller.sendMessageToEditor({
+      type: "persist-data",
+      data: {
+        refreshToken: response.refresh_token,
+      },
+    });
+  }
 }
 
 async function authorizeSpotify() {
@@ -266,12 +298,16 @@ async function authorizeSpotify() {
           controller.sendMessageToEditor({
             type: "persist-data",
             data: {
-              accessToken: response.access_token,
               refreshToken: response.refresh_token,
             },
           });
           let result = await spotifyApi.getMe();
           userEmail = result.body.email;
+          clearInterval(refreshTokenIntervalId);
+          refreshTokenIntervalId = setInterval(
+            refreshSpotifyToken,
+            1000 * 60 * 50,
+          );
           notifyPreference();
         }
         res.end(`Success!`);
