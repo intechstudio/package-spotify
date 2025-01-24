@@ -6,6 +6,7 @@
   import { MeltCombo } from "@intechstudio/grid-uikit";
   import { onMount } from "svelte";
   let eventId = "";
+  let playlistId = "";
   let currentCodeValue = "";
   let ref;
 
@@ -15,13 +16,19 @@
     { info: "Toggle", value: "toggle" },
   ];
 
+  let playlistSuggestions = []
+
+  // @ts-ignore
+  const messagePort = createPackageMessagePort("package-spotify", "like-action");
+
   function handleConfigUpdate(config) {
-    const regex = /^gps\("package-spotify", "likecurrent", "*(.*?)"\)$/;
+    const regex = /^gps\("package-spotify", "*(.*?)", "*(.*?)"\)$/;
     if (currentCodeValue != config.script) {
       currentCodeValue = config.script;
       const match = config.script.match(regex);
       if (match) {
         eventId = match[1] ?? "";
+        playlistId = match[2] ?? "";
       }
     }
   }
@@ -32,11 +39,26 @@
       detail: { handler: handleConfigUpdate },
     });
     ref.dispatchEvent(event);
+    messagePort.onmessage = (e) => {
+      const data = e.data;
+      if (data.type === "playlists") {
+        playlistSuggestions = [
+          {info: "Liked Songs", value: "liked"},
+          ...data.playlistSuggestions,
+        ]
+      }
+    };
+    messagePort.start();
+    messagePort.postMessage({
+      type: "request-playlists",
+    });
+    return () => {
+      messagePort.close();
+    };
   });
 
-  $: eventId &&
-    (function () {
-      var code = `gps("package-spotify", "likecurrent", "${eventId}")`;
+  $: eventId && playlistId && function () {
+      var code = `gps("package-spotify", "${eventId}", "${playlistId}")`;
       if (currentCodeValue != code) {
         currentCodeValue = code;
         const event = new CustomEvent("updateCode", {
@@ -47,7 +69,7 @@
           ref.dispatchEvent(event);
         }
       }
-    })();
+    }();
 </script>
 
 <spotify-likecurrent
@@ -55,10 +77,19 @@
   bind:this={ref}
 >
   <div class="w-full flex">
+    <div style="width: 30%; padding-right: 0.5rem">
     <MeltCombo
-      title={"Like Current Action"}
+      title={"Action"}
       bind:value={eventId}
       {suggestions}
+      searchable={true}
+      size={"full"}
+    />
+    </div>
+    <MeltCombo
+      title={"Playlist"}
+      bind:value={playlistId}
+      suggestions={playlistSuggestions}
       searchable={true}
       size={"full"}
     />

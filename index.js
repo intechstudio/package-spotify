@@ -13,8 +13,8 @@ let preferencePort = undefined;
 
 let polkaServer = undefined;
 
-const clientId = "7f6c2efb2c5244af80d14c4cdbc0253c";
-const redirectUri = "http://localhost:8888/callback";
+const clientId = "29315a1d2ed24d78ac871eb8939090fd";
+const redirectUri = "http://localhost:3845/callback";
 
 const spotifyApi = new SpotifyWebApi({
   clientId: clientId,
@@ -73,7 +73,7 @@ exports.loadPackage = async function (gridController, persistedData) {
       actionId: actionId++,
       short: "xslc",
       displayName: "Like Action",
-      defaultLua: 'gps("package-spotify", "likecurrent", "like")',
+      defaultLua: 'gps("package-spotify", "like", "liked")',
       rendering: "standard",
       category: "spotify",
       color: "#1DB954",
@@ -110,10 +110,6 @@ exports.unloadPackage = async function () {
 };
 
 exports.addMessagePort = async function (port, senderId) {
-  port.on("message", (e) => {
-    onMessage(port, e.data);
-  });
-
   messagePorts.add(port);
   port.postMessage({
     type: "clientInit",
@@ -127,8 +123,13 @@ exports.addMessagePort = async function (port, senderId) {
   });
   if (senderId === "preference") {
     preferencePort = port;
+    port.on("message", (e) => onPreferenceMessage(e.data));
     notifyPreference();
   }
+  if (senderId === "like-action") {
+    port.on("message", (e) => onActionMessage(port, e.data));
+  }
+
   port.start();
 };
 
@@ -158,23 +159,53 @@ exports.sendMessage = async function (args) {
         }
       }
     }
-    if (type === "likecurrent") {
+    if (type === "like" || type === "remove" || type === "toggle") {
       let currentState = await spotifyApi.getMyCurrentPlaybackState();
       let currentTrackId = currentState?.body?.item?.id;
+      let playlistId = args[1];
       if (currentTrackId) {
-        let eventId = args[1];
-        if (eventId === "toggle") {
-          let currentStatus = await spotifyApi.containsMySavedTracks([
-            currentTrackId,
-          ]);
-          let isSaved = currentStatus.body[0];
-          eventId = isSaved ? "remove" : "like";
-        }
-        if (eventId === "like") {
-          await spotifyApi.addToMySavedTracks([currentTrackId]);
-        }
-        if (eventId === "remove") {
-          await spotifyApi.removeFromMySavedTracks([currentTrackId]);
+        if (playlistId === "liked") {
+          if (type === "toggle") {
+            let currentStatus = await spotifyApi.containsMySavedTracks([
+              currentTrackId,
+            ]);
+            let isSaved = currentStatus.body[0];
+            type = isSaved ? "remove" : "like";
+          }
+          if (type === "like") {
+            await spotifyApi.addToMySavedTracks([currentTrackId]);
+          }
+          if (type === "remove") {
+            await spotifyApi.removeFromMySavedTracks([currentTrackId]);
+          }
+        } else {
+          if (type === "toggle") {
+            let trackIds = new Set();
+            let counter = 0;
+            let total = 0;
+            do {
+              let result = await spotifyApi.getPlaylistTracks(playlistId, {
+                limit: 100,
+                offset: counter,
+                fields: "items(track.id), total, offset, limit",
+              });
+              let items = result.body.items;
+              items.forEach((item) => trackIds.add(item.track.id));
+              total = result.body.total;
+              counter += items.length;
+              if (items.length === 0) break;
+            } while (counter < total);
+            type = trackIds.has(currentTrackId) ? "remove" : "like";
+          }
+          if (type === "like") {
+            await spotifyApi.addTracksToPlaylist(playlistId, [
+              `spotify:track:${currentTrackId}`,
+            ]);
+          } else if (type === "remove") {
+            await spotifyApi.removeTracksFromPlaylist(playlistId, [
+              { uri: `spotify:track:${currentTrackId}` },
+            ]);
+          }
         }
       }
     }
@@ -190,7 +221,20 @@ function generateRandomString(length) {
   return values.reduce((acc, x) => acc + possible[x % possible.length], "");
 }
 
-async function onMessage(port, data) {
+async function onActionMessage(port, data) {
+  if (data.type === "request-playlists") {
+    let playlists = await spotifyApi.getUserPlaylists();
+    console.log(playlists, playlists.body.items);
+    port.postMessage({
+      type: "playlists",
+      playlistSuggestions: playlists.body.items.map((e) => {
+        return { info: e.name, value: e.id };
+      }),
+    });
+  }
+}
+
+async function onPreferenceMessage(data) {
   if (data.type === "auth-spotify") {
     authorizeSpotify();
   }
@@ -244,8 +288,15 @@ async function refreshSpotifyToken() {
 
 async function authorizeSpotify() {
   let scope =
-    "user-read-playback-state user-modify-playback-state user-read-email user-library-read user-library-modify";
-  let state = "some-state-of-my-choice";
+    "user-read-playback-state " +
+    "user-modify-playback-state " +
+    "user-read-email " +
+    "user-library-read " +
+    "user-library-modify " +
+    "playlist-read-private " +
+    "playlist-read-collaborative " +
+    "playlist-modify-private " +
+    "playlist-modify-public";
 
   const codeVerifier = generateRandomString(64);
   const codeChallenge = crypto
@@ -261,7 +312,6 @@ async function authorizeSpotify() {
     response_type: "code",
     client_id: clientId,
     scope,
-    state,
     code_challenge_method: "S256",
     code_challenge: codeChallenge,
     redirect_uri: redirectUri,
@@ -310,16 +360,16 @@ async function authorizeSpotify() {
           );
           notifyPreference();
         }
-        res.end(`Success!`);
+        res.end(`<script>window.close();</script>`);
       } else {
         res.end(`Permission denied!`);
       }
       polkaServer.server.close();
       polkaServer = undefined;
     })
-    .listen(8888, (err) => {
+    .listen(3845, (err) => {
       if (err) throw err;
-      console.log("Running on localhost:8888");
+      console.log("Running on localhost:3845");
     });
   open(authUrl.toString());
 }
