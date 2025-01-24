@@ -1,3 +1,3 @@
 # Spotify Package
 
-This package is a POC for controlling Spotify through their Web API.
+This package is for controlling Spotify through their Web API with Grid modules.

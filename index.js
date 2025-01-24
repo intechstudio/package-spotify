@@ -187,7 +187,7 @@ exports.sendMessage = async function (args) {
               let result = await spotifyApi.getPlaylistTracks(playlistId, {
                 limit: 100,
                 offset: counter,
-                fields: "items(track.id), total, offset, limit",
+                fields: "items(track.id), total, limit",
               });
               let items = result.body.items;
               items.forEach((item) => trackIds.add(item.track.id));
@@ -223,11 +223,19 @@ function generateRandomString(length) {
 
 async function onActionMessage(port, data) {
   if (data.type === "request-playlists") {
-    let playlists = await spotifyApi.getUserPlaylists();
-    console.log(playlists, playlists.body.items);
+    let playlists = [];
+    let total = 0;
+    do {
+      let playlistResponse = await spotifyApi.getUserPlaylists({
+        offset: playlists.length,
+      });
+      playlists.push(...playlistResponse.body.items);
+      total = playlistResponse.body.total;
+      if (playlistResponse.body.items.length === 0) break;
+    } while (playlists.length < total);
     port.postMessage({
       type: "playlists",
-      playlistSuggestions: playlists.body.items.map((e) => {
+      playlistSuggestions: playlists.map((e) => {
         return { info: e.name, value: e.id };
       }),
     });
