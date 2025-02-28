@@ -24,6 +24,8 @@ let userEmail = "";
 let refreshTokenIntervalId;
 
 let actionId = 0;
+let fetchPlaybackStateIntervalId;
+let updateTrackProgressId;
 
 exports.loadPackage = async function (gridController, persistedData) {
   controller = gridController;
@@ -41,6 +43,11 @@ exports.loadPackage = async function (gridController, persistedData) {
       userEmail = me.body.email;
       notifyPreference();
       refreshTokenIntervalId = setInterval(refreshSpotifyToken, 1000 * 60 * 50);
+      fetchPlaybackStateIntervalId = setInterval(
+        fetchCurrentPlaybackState,
+        5 * 1000,
+      );
+      fetchCurrentPlaybackState();
     } catch (e) {
       console.error(e);
     }
@@ -107,6 +114,7 @@ exports.unloadPackage = async function () {
   polkaServer = undefined;
   messagePorts.forEach((port) => port.close());
   messagePorts.clear();
+  clearTimeout(updateTrackProgressId);
 };
 
 exports.addMessagePort = async function (port, senderId) {
@@ -138,25 +146,29 @@ exports.sendMessage = async function (args) {
   try {
     if (type === "playstate") {
       let eventId = args[1];
+      if (eventId === "toggle") {
+        //let currentState = await spotifyApi.getMyCurrentPlaybackState();
+        eventId = isPlaying ? "pause" : "play";
+      }
       if (eventId === "pause") {
+        isPlaying = false;
+        updateEditorPlaybackState();
         await spotifyApi.pause();
+        fetchCurrentPlaybackState();
       }
       if (eventId === "play") {
+        isPlaying = true;
+        updateEditorPlaybackState();
         await spotifyApi.play();
+        fetchCurrentPlaybackState();
       }
       if (eventId === "next") {
         await spotifyApi.skipToNext();
+        fetchCurrentPlaybackState();
       }
       if (eventId === "previous") {
         await spotifyApi.skipToPrevious();
-      }
-      if (eventId === "toggle") {
-        let currentState = await spotifyApi.getMyCurrentPlaybackState();
-        if (currentState.body.is_playing) {
-          await spotifyApi.pause();
-        } else {
-          await spotifyApi.play();
-        }
+        fetchCurrentPlaybackState();
       }
     }
     if (type === "like" || type === "remove" || type === "toggle") {
@@ -166,17 +178,24 @@ exports.sendMessage = async function (args) {
       if (currentTrackId) {
         if (playlistId === "liked") {
           if (type === "toggle") {
-            let currentStatus = await spotifyApi.containsMySavedTracks([
+            /*let currentStatus = await spotifyApi.containsMySavedTracks([
               currentTrackId,
             ]);
-            let isSaved = currentStatus.body[0];
+            let isSaved = currentStatus.body[0];*/
+            let isSaved = currentTrackLiked;
             type = isSaved ? "remove" : "like";
           }
           if (type === "like") {
+            currentTrackLiked = true;
+            updateEditorPlaybackState();
             await spotifyApi.addToMySavedTracks([currentTrackId]);
+            fetchCurrentPlaybackState();
           }
           if (type === "remove") {
+            currentTrackLiked = false;
+            updateEditorPlaybackState();
             await spotifyApi.removeFromMySavedTracks([currentTrackId]);
+            fetchCurrentPlaybackState();
           }
         } else {
           if (type === "toggle") {
@@ -214,11 +233,50 @@ exports.sendMessage = async function (args) {
   }
 };
 
-function generateRandomString(length) {
-  const possible =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  const values = crypto.getRandomValues(new Uint8Array(length));
-  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+let currentTrackName = "";
+let currentTrackArtist = "";
+let currentTrackProgress = undefined;
+let currentTrackLength = undefined;
+let currentTrackLiked = false;
+let isPlaying = false;
+
+function updateEditorPlaybackState() {
+  controller.sendMessageToEditor({
+    type: "execute-lua-script",
+    script: `spotify_play_callback('${currentTrackName}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`,
+  });
+  if (isPlaying && updateTrackProgressId === undefined) {
+    updateTrackProgressId = setTimeout(increaseTrackProgress, 1000);
+  }
+}
+
+function increaseTrackProgress() {
+  currentTrackProgress++;
+  updateTrackProgressId = undefined;
+  updateEditorPlaybackState();
+}
+
+async function fetchCurrentPlaybackState() {
+  try {
+    let currentStateResponse = await spotifyApi.getMyCurrentPlaybackState();
+    console.log({ currentStateResponse });
+    let currentState = currentStateResponse.body;
+    currentTrackName = currentState?.item?.name ?? "";
+    currentTrackArtist = currentState?.item?.artists[0]?.name ?? "";
+    currentTrackProgress = Math.floor((currentState?.progress_ms ?? 0) / 1000);
+    currentTrackLength = Math.floor(
+      (currentState?.item?.duration_ms ?? 0) / 1000,
+    );
+    isPlaying = currentState?.is_playing ?? false;
+    let currentStatus = await spotifyApi.containsMySavedTracks([
+      currentState?.item?.id,
+    ]);
+    let isSaved = currentStatus.body[0] ?? false;
+    currentTrackLiked = isSaved;
+    updateEditorPlaybackState();
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 async function onActionMessage(port, data) {
@@ -253,6 +311,7 @@ async function onPreferenceMessage(data) {
   if (data.type === "logout-user") {
     spotifyApi.resetCredentials();
     clearInterval(refreshTokenIntervalId);
+    clearInterval(fetchPlaybackStateIntervalId);
     userEmail = "";
     controller.sendMessageToEditor({
       type: "persist-data",
@@ -269,6 +328,13 @@ function notifyPreference() {
     type: "status",
     email: userEmail,
   });
+}
+
+function generateRandomString(length) {
+  const possible =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
 }
 
 async function refreshSpotifyToken() {
@@ -370,6 +436,11 @@ async function authorizeSpotify() {
             refreshSpotifyToken,
             1000 * 60 * 50,
           );
+          fetchPlaybackStateIntervalId = setInterval(
+            fetchCurrentPlaybackState,
+            5 * 1000,
+          );
+          fetchCurrentPlaybackState();
           notifyPreference();
         }
         res.end(`<script>window.close();</script>`);
