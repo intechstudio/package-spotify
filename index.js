@@ -222,23 +222,27 @@ function generateRandomString(length) {
 }
 
 async function onActionMessage(port, data) {
-  if (data.type === "request-playlists") {
-    let playlists = [];
-    let total = 0;
-    do {
-      let playlistResponse = await spotifyApi.getUserPlaylists({
-        offset: playlists.length,
+  try {
+    if (data.type === "request-playlists") {
+      let playlists = [];
+      let total = 0;
+      do {
+        let playlistResponse = await spotifyApi.getUserPlaylists({
+          offset: playlists.length,
+        });
+        playlists.push(...playlistResponse.body.items);
+        total = playlistResponse.body.total;
+        if (playlistResponse.body.items.length === 0) break;
+      } while (playlists.length < total);
+      port.postMessage({
+        type: "playlists",
+        playlistSuggestions: playlists.map((e) => {
+          return { info: e.name, value: e.id };
+        }),
       });
-      playlists.push(...playlistResponse.body.items);
-      total = playlistResponse.body.total;
-      if (playlistResponse.body.items.length === 0) break;
-    } while (playlists.length < total);
-    port.postMessage({
-      type: "playlists",
-      playlistSuggestions: playlists.map((e) => {
-        return { info: e.name, value: e.id };
-      }),
-    });
+    }
+  } catch (e) {
+    console.error(e);
   }
 }
 
