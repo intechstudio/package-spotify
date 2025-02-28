@@ -259,7 +259,6 @@ function increaseTrackProgress() {
 async function fetchCurrentPlaybackState() {
   try {
     let currentStateResponse = await spotifyApi.getMyCurrentPlaybackState();
-    console.log({ currentStateResponse });
     let currentState = currentStateResponse.body;
     currentTrackName = currentState?.item?.name ?? "";
     currentTrackArtist = currentState?.item?.artists[0]?.name ?? "";
