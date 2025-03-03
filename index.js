@@ -3,6 +3,7 @@ const path = require("path");
 const polka = require("polka");
 const crypto = require("crypto");
 const SpotifyWebApi = require("spotify-web-api-node");
+const { Jimp } = require("jimp");
 
 let open = undefined;
 
@@ -27,6 +28,23 @@ let actionId = 0;
 let fetchPlaybackStateIntervalId;
 let updateTrackProgressId;
 
+let latestImageUrl;
+
+let messageQue = [];
+let messageHandlerIntervalId;
+function queMessage(message, priority) {
+  if (priority) {
+    messageQue.unshift(message);
+  } else {
+    messageQue.push(message);
+  }
+}
+
+function sendNextMessage() {
+  let message = messageQue.shift();
+  controller.sendMessageToEditor(message);
+}
+
 exports.loadPackage = async function (gridController, persistedData) {
   controller = gridController;
 
@@ -43,6 +61,7 @@ exports.loadPackage = async function (gridController, persistedData) {
       userEmail = me.body.email;
       notifyPreference();
       refreshTokenIntervalId = setInterval(refreshSpotifyToken, 1000 * 60 * 50);
+      clearInterval(fetchPlaybackStateIntervalId);
       fetchPlaybackStateIntervalId = setInterval(
         fetchCurrentPlaybackState,
         5 * 1000,
@@ -95,12 +114,17 @@ exports.loadPackage = async function (gridController, persistedData) {
     },
   });
 
+  messageHandlerIntervalId = setInterval(sendNextMessage, 180);
+
   open = (await import("open")).default;
   isEnabled = true;
 };
 
 exports.unloadPackage = async function () {
   clearInterval(refreshTokenIntervalId);
+  clearInterval(fetchPlaybackStateIntervalId);
+  clearInterval(messageHandlerIntervalId);
+  clearTimeout(imageTransmitTimeoutId);
   while (--actionId >= 0) {
     controller.sendMessageToEditor({
       type: "remove-action",
@@ -241,10 +265,13 @@ let currentTrackLiked = false;
 let isPlaying = false;
 
 function updateEditorPlaybackState() {
-  controller.sendMessageToEditor({
-    type: "execute-lua-script",
-    script: `spotify_play_callback('${currentTrackName}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`,
-  });
+  queMessage(
+    {
+      type: "execute-lua-script",
+      script: `spotify_play_callback('${currentTrackName}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`,
+    },
+    true,
+  );
   if (isPlaying && updateTrackProgressId === undefined) {
     updateTrackProgressId = setTimeout(increaseTrackProgress, 1000);
   }
@@ -254,6 +281,64 @@ function increaseTrackProgress() {
   currentTrackProgress++;
   updateTrackProgressId = undefined;
   updateEditorPlaybackState();
+}
+
+let imageString;
+const imageSize = 30;
+async function scheduleAlbumCoverTransmit() {
+  if (!latestImageUrl) {
+    queMessage(
+      {
+        type: "execute-lua-script",
+        script: `image_transmit(0, "")`,
+      },
+      false,
+    );
+    return;
+  }
+  let image = await Jimp.read(latestImageUrl);
+  image.resize({ w: imageSize, h: imageSize });
+
+  imageString = "";
+  for (let i = 0; i < imageSize; i++) {
+    for (let j = 0; j < imageSize; j++) {
+      let pixel = image.getPixelColor(j, i);
+      const r = (pixel >> 24) & 0xff;
+      const g = (pixel >> 16) & 0xff;
+      const b = (pixel >> 8) & 0xff;
+
+      const buffer = Buffer.from([r, g, b]);
+
+      imageString += buffer.toString("base64");
+    }
+  }
+
+  imageIndex = 0;
+  transmitImageChunk();
+}
+
+let imageIndex = 0;
+let imageTransmitTimeoutId;
+const maxCharacterCount = 376;
+function transmitImageChunk() {
+  clearTimeout(imageTransmitTimeoutId);
+
+  let imagePart = imageString.substring(
+    imageIndex * maxCharacterCount,
+    (imageIndex + 1) * maxCharacterCount,
+  );
+
+  queMessage(
+    {
+      type: "execute-lua-script",
+      script: `sit(${imageIndex},"${imagePart}")`,
+    },
+    false,
+  );
+  imageIndex++;
+  if (imagePart.length == maxCharacterCount) {
+    imageTransmitTimeoutId = setTimeout(transmitImageChunk, 343);
+  }
 }
 
 async function fetchCurrentPlaybackState() {
@@ -273,6 +358,11 @@ async function fetchCurrentPlaybackState() {
     let isSaved = currentStatus.body[0] ?? false;
     currentTrackLiked = isSaved;
     updateEditorPlaybackState();
+    let trackImage = (currentState?.item?.album?.images ?? [])[0]?.url;
+    if (latestImageUrl != trackImage) {
+      latestImageUrl = trackImage;
+      scheduleAlbumCoverTransmit();
+    }
   } catch (e) {
     console.error(e);
   }
@@ -435,6 +525,7 @@ async function authorizeSpotify() {
             refreshSpotifyToken,
             1000 * 60 * 50,
           );
+          clearInterval(fetchPlaybackStateIntervalId);
           fetchPlaybackStateIntervalId = setInterval(
             fetchCurrentPlaybackState,
             5 * 1000,
