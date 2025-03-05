@@ -6,10 +6,17 @@
     BlockBody,
     BlockTitle,
     MoltenPushButton,
+    MeltCheckbox,
+    MeltCombo
   } from "@intechstudio/grid-uikit";
   import { onMount } from "svelte";
 
   let email = "";
+  let imageScale = "3";
+  let automaticallySendImage = false;
+  let streamInHigherQuality = false;
+  let messageQueTimeout = "180";
+  let isInitialized = false;
   $: currentlyConnected = (email ?? "") !== "";
 
   $: clientStatusLabel = currentlyConnected ? "Connected" : "Authorize";
@@ -34,11 +41,36 @@
     });
   }
 
+  function sendImage() {
+    messagePort.postMessage({
+      type: "send-image",
+    });
+  }
+
+  $: imageScale,  messageQueTimeout, automaticallySendImage, streamInHigherQuality, saveProperties();
+
+  function saveProperties() {
+    if (isInitialized){
+      messagePort.postMessage({
+        type: "save-properties",
+        imageScale: Number(imageScale),
+        messageQueTimeout: Number(messageQueTimeout),
+        automaticallySendImage,
+        streamInHigherQuality
+      });
+    }
+  }
+
   onMount(() => {
     messagePort.onmessage = (e) => {
       const data = e.data;
       if (data.type === "status") {
         email = data.email;
+        messageQueTimeout = String(data.messageQueTimeout);
+        automaticallySendImage = data.automaticallySendImage;
+        imageScale = String(data.imageScale);
+        streamInHigherQuality = data.streamInHigherQuality;
+        isInitialized = true;
       }
     };
     messagePort.start();
@@ -70,6 +102,27 @@
           Signed in as: {email}
         </BlockBody>
         <MoltenPushButton snap="full" text="Sign out" click={logoutUser} />
+        
+        <BlockTitle>
+          Developer Settings
+        </BlockTitle>
+        <BlockBody>
+          <MoltenPushButton snap="full" text="Send Album Image" click={sendImage} />
+          <MeltCheckbox
+            title="Automatically send image on album change"
+            bind:target={automaticallySendImage}
+          />
+          <MeltCheckbox
+            title="Stream in higher quality afterwards"
+            bind:target={streamInHigherQuality}
+          />
+          <MeltCombo
+            title="Scale image"
+            bind:value={imageScale} />
+          <MeltCombo
+            title="Message que timeout"
+            bind:value={messageQueTimeout} />
+        </BlockBody>
       {:else}
         <MoltenPushButton snap="full" text="Authorize" click={authorizeUser} />
       {/if}

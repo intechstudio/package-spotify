@@ -3,6 +3,7 @@ const path = require("path");
 const polka = require("polka");
 const crypto = require("crypto");
 const SpotifyWebApi = require("spotify-web-api-node");
+const { Jimp, ResizeStrategy } = require("jimp");
 
 let open = undefined;
 
@@ -24,6 +25,38 @@ let userEmail = "";
 let refreshTokenIntervalId;
 
 let actionId = 0;
+let fetchPlaybackStateIntervalId;
+let updateTrackProgressId;
+
+let latestImageUrl;
+
+let messageQue = [];
+let messageQueTimeoutId = undefined;
+let messageQueTimeout = 180;
+let imageScale = 3;
+let streamInHigherQuality = false;
+let automaticallySendImage = false;
+
+function queMessage(message, priority) {
+  if (priority) {
+    messageQue.unshift(message);
+  } else {
+    messageQue.push(message);
+  }
+  if (messageQueTimeoutId === undefined) {
+    sendNextMessage();
+  }
+}
+
+function sendNextMessage() {
+  messageQueTimeoutId = undefined;
+  let message = messageQue.shift();
+  if (!message) return;
+
+  controller.sendMessageToEditor(message);
+  console.log(messageQueTimeout);
+  messageQueTimeoutId = setTimeout(sendNextMessage, messageQueTimeout);
+}
 
 exports.loadPackage = async function (gridController, persistedData) {
   controller = gridController;
@@ -34,6 +67,11 @@ exports.loadPackage = async function (gridController, persistedData) {
   );
 
   if (persistedData) {
+    messageQueTimeout = persistedData.messageQueTimeout ?? 180;
+    imageScale = persistedData.imageScale ?? 3;
+    automaticallySendImage = persistedData.automaticallySendImage ?? false;
+    streamInHigherQuality = persistedData.streamInHigherQuality ?? false;
+
     spotifyApi.setRefreshToken(persistedData.refreshToken);
     try {
       await refreshSpotifyToken();
@@ -41,6 +79,12 @@ exports.loadPackage = async function (gridController, persistedData) {
       userEmail = me.body.email;
       notifyPreference();
       refreshTokenIntervalId = setInterval(refreshSpotifyToken, 1000 * 60 * 50);
+      clearInterval(fetchPlaybackStateIntervalId);
+      fetchPlaybackStateIntervalId = setInterval(
+        fetchCurrentPlaybackState,
+        5 * 1000,
+      );
+      fetchCurrentPlaybackState();
     } catch (e) {
       console.error(e);
     }
@@ -94,6 +138,8 @@ exports.loadPackage = async function (gridController, persistedData) {
 
 exports.unloadPackage = async function () {
   clearInterval(refreshTokenIntervalId);
+  clearInterval(fetchPlaybackStateIntervalId);
+  clearTimeout(messageQueTimeoutId);
   while (--actionId >= 0) {
     controller.sendMessageToEditor({
       type: "remove-action",
@@ -107,6 +153,7 @@ exports.unloadPackage = async function () {
   polkaServer = undefined;
   messagePorts.forEach((port) => port.close());
   messagePorts.clear();
+  clearTimeout(updateTrackProgressId);
 };
 
 exports.addMessagePort = async function (port, senderId) {
@@ -136,27 +183,34 @@ exports.addMessagePort = async function (port, senderId) {
 exports.sendMessage = async function (args) {
   let type = args[0];
   try {
+    if (type == "send-album") {
+      scheduleAlbumCoverTransmit();
+    }
     if (type === "playstate") {
       let eventId = args[1];
+      if (eventId === "toggle") {
+        //let currentState = await spotifyApi.getMyCurrentPlaybackState();
+        eventId = isPlaying ? "pause" : "play";
+      }
       if (eventId === "pause") {
+        isPlaying = false;
+        updateEditorPlaybackState();
         await spotifyApi.pause();
+        fetchCurrentPlaybackState();
       }
       if (eventId === "play") {
+        isPlaying = true;
+        updateEditorPlaybackState();
         await spotifyApi.play();
+        fetchCurrentPlaybackState();
       }
       if (eventId === "next") {
         await spotifyApi.skipToNext();
+        fetchCurrentPlaybackState();
       }
       if (eventId === "previous") {
         await spotifyApi.skipToPrevious();
-      }
-      if (eventId === "toggle") {
-        let currentState = await spotifyApi.getMyCurrentPlaybackState();
-        if (currentState.body.is_playing) {
-          await spotifyApi.pause();
-        } else {
-          await spotifyApi.play();
-        }
+        fetchCurrentPlaybackState();
       }
     }
     if (type === "like" || type === "remove" || type === "toggle") {
@@ -166,17 +220,24 @@ exports.sendMessage = async function (args) {
       if (currentTrackId) {
         if (playlistId === "liked") {
           if (type === "toggle") {
-            let currentStatus = await spotifyApi.containsMySavedTracks([
+            /*let currentStatus = await spotifyApi.containsMySavedTracks([
               currentTrackId,
             ]);
-            let isSaved = currentStatus.body[0];
+            let isSaved = currentStatus.body[0];*/
+            let isSaved = currentTrackLiked;
             type = isSaved ? "remove" : "like";
           }
           if (type === "like") {
+            currentTrackLiked = true;
+            updateEditorPlaybackState();
             await spotifyApi.addToMySavedTracks([currentTrackId]);
+            fetchCurrentPlaybackState();
           }
           if (type === "remove") {
+            currentTrackLiked = false;
+            updateEditorPlaybackState();
             await spotifyApi.removeFromMySavedTracks([currentTrackId]);
+            fetchCurrentPlaybackState();
           }
         } else {
           if (type === "toggle") {
@@ -214,11 +275,164 @@ exports.sendMessage = async function (args) {
   }
 };
 
-function generateRandomString(length) {
-  const possible =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  const values = crypto.getRandomValues(new Uint8Array(length));
-  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+let currentTrackName = "";
+let currentTrackArtist = "";
+let currentTrackProgress = undefined;
+let currentTrackLength = undefined;
+let currentTrackLiked = false;
+let isPlaying = false;
+
+function updateEditorPlaybackState() {
+  queMessage(
+    {
+      type: "execute-lua-script",
+      script: `spotify_play_callback('${currentTrackName.replace("'", "\\\'")}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`,
+    },
+    true,
+  );
+  if (isPlaying && updateTrackProgressId === undefined) {
+    updateTrackProgressId = setTimeout(increaseTrackProgress, 1000);
+  }
+}
+
+function increaseTrackProgress() {
+  currentTrackProgress++;
+  updateTrackProgressId = undefined;
+  updateEditorPlaybackState();
+}
+
+let imageString;
+let latestScaleSize = undefined;
+const maxCharacterCount = 376;
+async function scheduleAlbumCoverTransmit() {
+  messageQue = [];
+  if (latestScaleSize != imageScale) {
+    latestScaleSize = imageScale;
+    queMessage(
+      {
+        type: "execute-lua-script",
+        script: `setscale(${latestScaleSize})`,
+      },
+      false,
+    );
+  }
+  queMessage(
+    {
+      type: "execute-lua-script",
+      script: `sit(0, "")`,
+    },
+    false,
+  );
+
+  let image = await Jimp.read(latestImageUrl);
+  let highQualityImage;
+  if (streamInHigherQuality) {
+    highQualityImage = image.clone();
+  }
+
+  const imageSize = 120 / latestScaleSize;
+  image.resize({ w: imageSize, h: imageSize });
+
+  imageString = "";
+  for (let i = 0; i < imageSize; i++) {
+    for (let j = 0; j < imageSize; j++) {
+      let pixel = image.getPixelColor(j, i);
+      const r = (pixel >> 24) & 0xff;
+      const g = (pixel >> 16) & 0xff;
+      const b = (pixel >> 8) & 0xff;
+
+      const buffer = Buffer.from([r, g, b]);
+
+      imageString += buffer.toString("base64");
+    }
+  }
+
+  let imageIndex = 0;
+  let imagePart = "";
+  do {
+    imagePart = imageString.substring(
+      imageIndex * maxCharacterCount,
+      (imageIndex + 1) * maxCharacterCount,
+    );
+    queMessage(
+      {
+        type: "execute-lua-script",
+        script: `sit(${imageIndex},"${imagePart}")`,
+      },
+      false,
+    );
+    imageIndex++;
+  } while (imagePart.length == maxCharacterCount);
+
+  if (streamInHigherQuality && latestScaleSize != 1) {
+    latestScaleSize = 1;
+    queMessage({
+      type: "execute-lua-script",
+      script: `setscale(${latestScaleSize})`,
+    });
+
+    const highImageSize = 120;
+    highQualityImage.resize({ w: highImageSize, h: highImageSize });
+
+    imageString = "";
+    for (let i = 0; i < highImageSize; i++) {
+      for (let j = 0; j < highImageSize; j++) {
+        let pixel = highQualityImage.getPixelColor(j, i);
+        const r = (pixel >> 24) & 0xff;
+        const g = (pixel >> 16) & 0xff;
+        const b = (pixel >> 8) & 0xff;
+
+        const buffer = Buffer.from([r, g, b]);
+
+        imageString += buffer.toString("base64");
+      }
+    }
+
+    imageIndex = 0;
+    do {
+      imagePart = imageString.substring(
+        imageIndex * maxCharacterCount,
+        (imageIndex + 1) * maxCharacterCount,
+      );
+      queMessage(
+        {
+          type: "execute-lua-script",
+          script: `sit(${imageIndex},"${imagePart}")`,
+        },
+        false,
+      );
+      imageIndex++;
+    } while (imagePart.length == maxCharacterCount);
+  }
+}
+
+async function fetchCurrentPlaybackState() {
+  try {
+    let currentStateResponse = await spotifyApi.getMyCurrentPlaybackState();
+    let currentState = currentStateResponse.body;
+    currentTrackName = currentState?.item?.name ?? "";
+    currentTrackArtist = currentState?.item?.artists[0]?.name ?? "";
+    currentTrackProgress = Math.floor((currentState?.progress_ms ?? 0) / 1000);
+    currentTrackLength = Math.floor(
+      (currentState?.item?.duration_ms ?? 0) / 1000,
+    );
+    isPlaying = currentState?.is_playing ?? false;
+    let currentStatus = await spotifyApi.containsMySavedTracks([
+      currentState?.item?.id,
+    ]);
+    let isSaved = currentStatus.body[0] ?? false;
+    currentTrackLiked = isSaved;
+    updateEditorPlaybackState();
+    let trackImage = (currentState?.item?.album?.images ?? [])[0]?.url;
+    if (latestImageUrl != trackImage) {
+      latestImageUrl = trackImage;
+      if (automaticallySendImage) {
+        scheduleAlbumCoverTransmit();
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 async function onActionMessage(port, data) {
@@ -253,12 +467,39 @@ async function onPreferenceMessage(data) {
   if (data.type === "logout-user") {
     spotifyApi.resetCredentials();
     clearInterval(refreshTokenIntervalId);
+    clearInterval(fetchPlaybackStateIntervalId);
     userEmail = "";
     controller.sendMessageToEditor({
       type: "persist-data",
-      data: undefined,
+      data: {
+        refreshToken: undefined,
+        messageQueTimeout,
+        imageScale,
+        automaticallySendImage,
+        streamInHigherQuality,
+      },
     });
     notifyPreference();
+  }
+  if (data.type === "send-image") {
+    scheduleAlbumCoverTransmit();
+  }
+  if (data.type === "save-properties") {
+    messageQueTimeout = data.messageQueTimeout;
+    imageScale = data.imageScale;
+    automaticallySendImage = data.automaticallySendImage;
+    streamInHigherQuality = data.streamInHigherQuality;
+
+    controller.sendMessageToEditor({
+      type: "persist-data",
+      data: {
+        refreshToken: spotifyApi.getRefreshToken(),
+        messageQueTimeout,
+        imageScale,
+        automaticallySendImage,
+        streamInHigherQuality,
+      },
+    });
   }
 }
 
@@ -268,7 +509,18 @@ function notifyPreference() {
   preferencePort.postMessage({
     type: "status",
     email: userEmail,
+    messageQueTimeout,
+    imageScale,
+    automaticallySendImage,
+    streamInHigherQuality,
   });
+}
+
+function generateRandomString(length) {
+  const possible =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
 }
 
 async function refreshSpotifyToken() {
@@ -293,6 +545,10 @@ async function refreshSpotifyToken() {
       type: "persist-data",
       data: {
         refreshToken: response.refresh_token,
+        messageQueTimeout,
+        imageScale,
+        automaticallySendImage,
+        streamInHigherQuality,
       },
     });
   }
@@ -361,6 +617,10 @@ async function authorizeSpotify() {
             type: "persist-data",
             data: {
               refreshToken: response.refresh_token,
+              messageQueTimeout,
+              imageScale,
+              automaticallySendImage,
+              streamInHigherQuality,
             },
           });
           let result = await spotifyApi.getMe();
@@ -370,6 +630,12 @@ async function authorizeSpotify() {
             refreshSpotifyToken,
             1000 * 60 * 50,
           );
+          clearInterval(fetchPlaybackStateIntervalId);
+          fetchPlaybackStateIntervalId = setInterval(
+            fetchCurrentPlaybackState,
+            5 * 1000,
+          );
+          fetchCurrentPlaybackState();
           notifyPreference();
         }
         res.end(`<script>window.close();</script>`);
