@@ -16,6 +16,7 @@
   let automaticallySendImage = false;
   let streamInHigherQuality = false;
   let messageQueTimeout = "180";
+  let spotifyFetchIntervalTime = "5000"
   let isInitialized = false;
   $: currentlyConnected = (email ?? "") !== "";
 
@@ -47,7 +48,7 @@
     });
   }
 
-  $: imageScale,  messageQueTimeout, automaticallySendImage, streamInHigherQuality, saveProperties();
+  $: imageScale,  messageQueTimeout, automaticallySendImage, streamInHigherQuality, spotifyFetchIntervalTime, saveProperties();
 
   function saveProperties() {
     if (isInitialized){
@@ -56,7 +57,8 @@
         imageScale: Number(imageScale),
         messageQueTimeout: Number(messageQueTimeout),
         automaticallySendImage,
-        streamInHigherQuality
+        streamInHigherQuality,
+        spotifyFetchIntervalTime: Number(spotifyFetchIntervalTime),
       });
     }
   }
@@ -70,6 +72,7 @@
         automaticallySendImage = data.automaticallySendImage;
         imageScale = String(data.imageScale);
         streamInHigherQuality = data.streamInHigherQuality;
+        spotifyFetchIntervalTime = String(data.spotifyFetchIntervalTime);
         isInitialized = true;
       }
     };
@@ -107,6 +110,9 @@
           Developer Settings
         </BlockTitle>
         <BlockBody>
+          <MeltCombo
+            title="Spotify fetch interval time"
+            bind:value={spotifyFetchIntervalTime} />
           <MoltenPushButton snap="full" text="Send Album Image" click={sendImage} />
           <MeltCheckbox
             title="Automatically send image on album change"

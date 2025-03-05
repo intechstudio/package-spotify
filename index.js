@@ -25,7 +25,6 @@ let userEmail = "";
 let refreshTokenIntervalId;
 
 let actionId = 0;
-let fetchPlaybackStateIntervalId;
 let updateTrackProgressId;
 
 let latestImageUrl;
@@ -36,6 +35,9 @@ let messageQueTimeout = 180;
 let imageScale = 3;
 let streamInHigherQuality = false;
 let automaticallySendImage = false;
+
+let spotifyFetchTimeoutId = undefined;
+let spotifyFetchIntervalTime = 5 * 1000;
 
 function queMessage(message, priority) {
   if (priority) {
@@ -49,12 +51,12 @@ function queMessage(message, priority) {
 }
 
 function sendNextMessage() {
+  clearTimeout(messageQueTimeoutId);
   messageQueTimeoutId = undefined;
   let message = messageQue.shift();
   if (!message) return;
 
   controller.sendMessageToEditor(message);
-  console.log(messageQueTimeout);
   messageQueTimeoutId = setTimeout(sendNextMessage, messageQueTimeout);
 }
 
@@ -71,6 +73,8 @@ exports.loadPackage = async function (gridController, persistedData) {
     imageScale = persistedData.imageScale ?? 3;
     automaticallySendImage = persistedData.automaticallySendImage ?? false;
     streamInHigherQuality = persistedData.streamInHigherQuality ?? false;
+    spotifyFetchIntervalTime =
+      persistedData.spotifyFetchIntervalTime ?? 5 * 1000;
 
     spotifyApi.setRefreshToken(persistedData.refreshToken);
     try {
@@ -79,11 +83,6 @@ exports.loadPackage = async function (gridController, persistedData) {
       userEmail = me.body.email;
       notifyPreference();
       refreshTokenIntervalId = setInterval(refreshSpotifyToken, 1000 * 60 * 50);
-      clearInterval(fetchPlaybackStateIntervalId);
-      fetchPlaybackStateIntervalId = setInterval(
-        fetchCurrentPlaybackState,
-        5 * 1000,
-      );
       fetchCurrentPlaybackState();
     } catch (e) {
       console.error(e);
@@ -138,7 +137,7 @@ exports.loadPackage = async function (gridController, persistedData) {
 
 exports.unloadPackage = async function () {
   clearInterval(refreshTokenIntervalId);
-  clearInterval(fetchPlaybackStateIntervalId);
+  clearTimeout(spotifyFetchTimeoutId);
   clearTimeout(messageQueTimeoutId);
   while (--actionId >= 0) {
     controller.sendMessageToEditor({
@@ -194,23 +193,19 @@ exports.sendMessage = async function (args) {
       }
       if (eventId === "pause") {
         isPlaying = false;
-        updateEditorPlaybackState();
+        //updateEditorPlaybackState();
         await spotifyApi.pause();
-        fetchCurrentPlaybackState();
       }
       if (eventId === "play") {
         isPlaying = true;
-        updateEditorPlaybackState();
+        //updateEditorPlaybackState();
         await spotifyApi.play();
-        fetchCurrentPlaybackState();
       }
       if (eventId === "next") {
         await spotifyApi.skipToNext();
-        fetchCurrentPlaybackState();
       }
       if (eventId === "previous") {
         await spotifyApi.skipToPrevious();
-        fetchCurrentPlaybackState();
       }
     }
     if (type === "like" || type === "remove" || type === "toggle") {
@@ -282,17 +277,23 @@ let currentTrackLength = undefined;
 let currentTrackLiked = false;
 let isPlaying = false;
 
+let lastSpotifyStateString;
 function updateEditorPlaybackState() {
-  queMessage(
-    {
-      type: "execute-lua-script",
-      script: `spotify_play_callback('${currentTrackName.replace("'", "\\\'")}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`,
-    },
-    true,
-  );
   if (isPlaying && updateTrackProgressId === undefined) {
     updateTrackProgressId = setTimeout(increaseTrackProgress, 1000);
   }
+
+  let script = `spotify_play_callback('${currentTrackName.replace("'", "\\\'")}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`;
+  if (lastSpotifyStateString == script) return;
+
+  lastSpotifyStateString = script;
+  queMessage(
+    {
+      type: "execute-lua-script",
+      script,
+    },
+    true,
+  );
 }
 
 function increaseTrackProgress() {
@@ -422,6 +423,8 @@ async function fetchCurrentPlaybackState() {
     ]);
     let isSaved = currentStatus.body[0] ?? false;
     currentTrackLiked = isSaved;
+    clearTimeout(updateTrackProgressId);
+    updateTrackProgressId = undefined;
     updateEditorPlaybackState();
     let trackImage = (currentState?.item?.album?.images ?? [])[0]?.url;
     if (latestImageUrl != trackImage) {
@@ -433,6 +436,11 @@ async function fetchCurrentPlaybackState() {
   } catch (e) {
     console.error(e);
   }
+  clearTimeout(spotifyFetchTimeoutId);
+  spotifyFetchTimeoutId = setTimeout(
+    fetchCurrentPlaybackState,
+    Math.max(50, spotifyFetchIntervalTime),
+  );
 }
 
 async function onActionMessage(port, data) {
@@ -467,7 +475,7 @@ async function onPreferenceMessage(data) {
   if (data.type === "logout-user") {
     spotifyApi.resetCredentials();
     clearInterval(refreshTokenIntervalId);
-    clearInterval(fetchPlaybackStateIntervalId);
+    clearTimeout(spotifyFetchTimeoutId);
     userEmail = "";
     controller.sendMessageToEditor({
       type: "persist-data",
@@ -477,6 +485,7 @@ async function onPreferenceMessage(data) {
         imageScale,
         automaticallySendImage,
         streamInHigherQuality,
+        spotifyFetchIntervalTime,
       },
     });
     notifyPreference();
@@ -489,6 +498,7 @@ async function onPreferenceMessage(data) {
     imageScale = data.imageScale;
     automaticallySendImage = data.automaticallySendImage;
     streamInHigherQuality = data.streamInHigherQuality;
+    spotifyFetchIntervalTime = data.spotifyFetchIntervalTime;
 
     controller.sendMessageToEditor({
       type: "persist-data",
@@ -498,6 +508,7 @@ async function onPreferenceMessage(data) {
         imageScale,
         automaticallySendImage,
         streamInHigherQuality,
+        spotifyFetchIntervalTime,
       },
     });
   }
@@ -513,6 +524,7 @@ function notifyPreference() {
     imageScale,
     automaticallySendImage,
     streamInHigherQuality,
+    spotifyFetchIntervalTime,
   });
 }
 
@@ -549,6 +561,7 @@ async function refreshSpotifyToken() {
         imageScale,
         automaticallySendImage,
         streamInHigherQuality,
+        spotifyFetchIntervalTime,
       },
     });
   }
@@ -621,6 +634,7 @@ async function authorizeSpotify() {
               imageScale,
               automaticallySendImage,
               streamInHigherQuality,
+              spotifyFetchIntervalTime,
             },
           });
           let result = await spotifyApi.getMe();
@@ -629,11 +643,6 @@ async function authorizeSpotify() {
           refreshTokenIntervalId = setInterval(
             refreshSpotifyToken,
             1000 * 60 * 50,
-          );
-          clearInterval(fetchPlaybackStateIntervalId);
-          fetchPlaybackStateIntervalId = setInterval(
-            fetchCurrentPlaybackState,
-            5 * 1000,
           );
           fetchCurrentPlaybackState();
           notifyPreference();
