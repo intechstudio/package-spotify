@@ -32,8 +32,7 @@ let latestImageUrl;
 let messageQue = [];
 let messageQueTimeoutId = undefined;
 let messageQueTimeout = 180;
-let imageScale = 3;
-let streamInHigherQuality = false;
+let imageScale = "24,12,3,1";
 let automaticallySendImage = false;
 
 let spotifyFetchTimeoutId = undefined;
@@ -70,9 +69,8 @@ exports.loadPackage = async function (gridController, persistedData) {
 
   if (persistedData) {
     messageQueTimeout = persistedData.messageQueTimeout ?? 180;
-    imageScale = persistedData.imageScale ?? 3;
+    imageScale = persistedData.imageScale ?? "24,12,3,1";
     automaticallySendImage = persistedData.automaticallySendImage ?? false;
-    streamInHigherQuality = persistedData.streamInHigherQuality ?? false;
     spotifyFetchIntervalTime =
       persistedData.spotifyFetchIntervalTime ?? 5 * 1000;
 
@@ -307,16 +305,6 @@ let latestScaleSize = undefined;
 const maxCharacterCount = 376;
 async function scheduleAlbumCoverTransmit() {
   messageQue = [];
-  if (latestScaleSize != imageScale) {
-    latestScaleSize = imageScale;
-    queMessage(
-      {
-        type: "execute-lua-script",
-        script: `setscale(${latestScaleSize})`,
-      },
-      false,
-    );
-  }
   queMessage(
     {
       type: "execute-lua-script",
@@ -324,61 +312,33 @@ async function scheduleAlbumCoverTransmit() {
     },
     false,
   );
-
   let image = await Jimp.read(latestImageUrl);
-  let highQualityImage;
-  if (streamInHigherQuality) {
-    highQualityImage = image.clone();
-  }
-
-  const imageSize = 120 / latestScaleSize;
-  image.resize({ w: imageSize, h: imageSize });
-
-  imageString = "";
-  for (let i = 0; i < imageSize; i++) {
-    for (let j = 0; j < imageSize; j++) {
-      let pixel = image.getPixelColor(j, i);
-      const r = (pixel >> 24) & 0xff;
-      const g = (pixel >> 16) & 0xff;
-      const b = (pixel >> 8) & 0xff;
-
-      const buffer = Buffer.from([r, g, b]);
-
-      imageString += buffer.toString("base64");
+  let imageScalesArray = [6, 1];
+  try {
+    imageScalesArray = imageScale
+      .split(",")
+      .map((e) => Number(e))
+      .filter((e) => e > 0);
+  } catch (e) {}
+  for (let currScale of imageScalesArray) {
+    if (latestScaleSize != currScale) {
+      latestScaleSize = currScale;
+      queMessage(
+        {
+          type: "execute-lua-script",
+          script: `setscale(${latestScaleSize})`,
+        },
+        false,
+      );
     }
-  }
-
-  let imageIndex = 0;
-  let imagePart = "";
-  do {
-    imagePart = imageString.substring(
-      imageIndex * maxCharacterCount,
-      (imageIndex + 1) * maxCharacterCount,
-    );
-    queMessage(
-      {
-        type: "execute-lua-script",
-        script: `sit(${imageIndex},"${imagePart}")`,
-      },
-      false,
-    );
-    imageIndex++;
-  } while (imagePart.length == maxCharacterCount);
-
-  if (streamInHigherQuality && latestScaleSize != 1) {
-    latestScaleSize = 1;
-    queMessage({
-      type: "execute-lua-script",
-      script: `setscale(${latestScaleSize})`,
-    });
-
-    const highImageSize = 120;
-    highQualityImage.resize({ w: highImageSize, h: highImageSize });
+    let scaledImage = image.clone();
+    const imageSize = 120 / latestScaleSize;
+    scaledImage.resize({ w: imageSize, h: imageSize });
 
     imageString = "";
-    for (let i = 0; i < highImageSize; i++) {
-      for (let j = 0; j < highImageSize; j++) {
-        let pixel = highQualityImage.getPixelColor(j, i);
+    for (let i = 0; i < imageSize; i++) {
+      for (let j = 0; j < imageSize; j++) {
+        let pixel = scaledImage.getPixelColor(j, i);
         const r = (pixel >> 24) & 0xff;
         const g = (pixel >> 16) & 0xff;
         const b = (pixel >> 8) & 0xff;
@@ -389,7 +349,8 @@ async function scheduleAlbumCoverTransmit() {
       }
     }
 
-    imageIndex = 0;
+    let imageIndex = 0;
+    let imagePart = "";
     do {
       imagePart = imageString.substring(
         imageIndex * maxCharacterCount,
@@ -484,7 +445,6 @@ async function onPreferenceMessage(data) {
         messageQueTimeout,
         imageScale,
         automaticallySendImage,
-        streamInHigherQuality,
         spotifyFetchIntervalTime,
       },
     });
@@ -497,7 +457,6 @@ async function onPreferenceMessage(data) {
     messageQueTimeout = data.messageQueTimeout;
     imageScale = data.imageScale;
     automaticallySendImage = data.automaticallySendImage;
-    streamInHigherQuality = data.streamInHigherQuality;
     spotifyFetchIntervalTime = data.spotifyFetchIntervalTime;
 
     controller.sendMessageToEditor({
@@ -507,7 +466,6 @@ async function onPreferenceMessage(data) {
         messageQueTimeout,
         imageScale,
         automaticallySendImage,
-        streamInHigherQuality,
         spotifyFetchIntervalTime,
       },
     });
@@ -523,7 +481,6 @@ function notifyPreference() {
     messageQueTimeout,
     imageScale,
     automaticallySendImage,
-    streamInHigherQuality,
     spotifyFetchIntervalTime,
   });
 }
@@ -560,7 +517,6 @@ async function refreshSpotifyToken() {
         messageQueTimeout,
         imageScale,
         automaticallySendImage,
-        streamInHigherQuality,
         spotifyFetchIntervalTime,
       },
     });
@@ -633,7 +589,6 @@ async function authorizeSpotify() {
               messageQueTimeout,
               imageScale,
               automaticallySendImage,
-              streamInHigherQuality,
               spotifyFetchIntervalTime,
             },
           });

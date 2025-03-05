@@ -14,7 +14,6 @@
   let email = "";
   let imageScale = "3";
   let automaticallySendImage = false;
-  let streamInHigherQuality = false;
   let messageQueTimeout = "180";
   let spotifyFetchIntervalTime = "5000"
   let isInitialized = false;
@@ -48,16 +47,15 @@
     });
   }
 
-  $: imageScale,  messageQueTimeout, automaticallySendImage, streamInHigherQuality, spotifyFetchIntervalTime, saveProperties();
+  $: imageScale,  messageQueTimeout, automaticallySendImage, spotifyFetchIntervalTime, saveProperties();
 
   function saveProperties() {
     if (isInitialized){
       messagePort.postMessage({
         type: "save-properties",
-        imageScale: Number(imageScale),
+        imageScale: imageScale,
         messageQueTimeout: Number(messageQueTimeout),
         automaticallySendImage,
-        streamInHigherQuality,
         spotifyFetchIntervalTime: Number(spotifyFetchIntervalTime),
       });
     }
@@ -70,8 +68,7 @@
         email = data.email;
         messageQueTimeout = String(data.messageQueTimeout);
         automaticallySendImage = data.automaticallySendImage;
-        imageScale = String(data.imageScale);
-        streamInHigherQuality = data.streamInHigherQuality;
+        imageScale = data.imageScale;
         spotifyFetchIntervalTime = String(data.spotifyFetchIntervalTime);
         isInitialized = true;
       }
@@ -117,10 +114,6 @@
           <MeltCheckbox
             title="Automatically send image on album change"
             bind:target={automaticallySendImage}
-          />
-          <MeltCheckbox
-            title="Stream in higher quality afterwards"
-            bind:target={streamInHigherQuality}
           />
           <MeltCombo
             title="Scale image"
