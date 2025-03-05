@@ -3,7 +3,7 @@ const path = require("path");
 const polka = require("polka");
 const crypto = require("crypto");
 const SpotifyWebApi = require("spotify-web-api-node");
-const { Jimp } = require("jimp");
+const { Jimp, ResizeStrategy } = require("jimp");
 
 let open = undefined;
 
@@ -31,18 +31,31 @@ let updateTrackProgressId;
 let latestImageUrl;
 
 let messageQue = [];
-let messageHandlerIntervalId;
+let messageQueTimeoutId = undefined;
+let messageQueTimeout = 180;
+let imageScale = 3;
+let streamInHigherQuality = false;
+let automaticallySendImage = false;
+
 function queMessage(message, priority) {
   if (priority) {
     messageQue.unshift(message);
   } else {
     messageQue.push(message);
   }
+  if (messageQueTimeoutId === undefined) {
+    sendNextMessage();
+  }
 }
 
 function sendNextMessage() {
+  messageQueTimeoutId = undefined;
   let message = messageQue.shift();
+  if (!message) return;
+
   controller.sendMessageToEditor(message);
+  console.log(messageQueTimeout);
+  messageQueTimeoutId = setTimeout(sendNextMessage, messageQueTimeout);
 }
 
 exports.loadPackage = async function (gridController, persistedData) {
@@ -54,6 +67,11 @@ exports.loadPackage = async function (gridController, persistedData) {
   );
 
   if (persistedData) {
+    messageQueTimeout = persistedData.messageQueTimeout ?? 180;
+    imageScale = persistedData.imageScale ?? 3;
+    automaticallySendImage = persistedData.automaticallySendImage ?? false;
+    streamInHigherQuality = persistedData.streamInHigherQuality ?? false;
+
     spotifyApi.setRefreshToken(persistedData.refreshToken);
     try {
       await refreshSpotifyToken();
@@ -114,8 +132,6 @@ exports.loadPackage = async function (gridController, persistedData) {
     },
   });
 
-  messageHandlerIntervalId = setInterval(sendNextMessage, 180);
-
   open = (await import("open")).default;
   isEnabled = true;
 };
@@ -123,8 +139,7 @@ exports.loadPackage = async function (gridController, persistedData) {
 exports.unloadPackage = async function () {
   clearInterval(refreshTokenIntervalId);
   clearInterval(fetchPlaybackStateIntervalId);
-  clearInterval(messageHandlerIntervalId);
-  clearTimeout(imageTransmitTimeoutId);
+  clearTimeout(messageQueTimeoutId);
   while (--actionId >= 0) {
     controller.sendMessageToEditor({
       type: "remove-action",
@@ -168,6 +183,9 @@ exports.addMessagePort = async function (port, senderId) {
 exports.sendMessage = async function (args) {
   let type = args[0];
   try {
+    if (type == "send-album") {
+      scheduleAlbumCoverTransmit();
+    }
     if (type === "playstate") {
       let eventId = args[1];
       if (eventId === "toggle") {
@@ -268,7 +286,7 @@ function updateEditorPlaybackState() {
   queMessage(
     {
       type: "execute-lua-script",
-      script: `spotify_play_callback('${currentTrackName}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`,
+      script: `spotify_play_callback('${currentTrackName.replace("'", "\\\'")}','${currentTrackArtist}',${currentTrackProgress},${currentTrackLength},${currentTrackLiked},${isPlaying})`,
     },
     true,
   );
@@ -284,19 +302,35 @@ function increaseTrackProgress() {
 }
 
 let imageString;
-const imageSize = 30;
+let latestScaleSize = undefined;
+const maxCharacterCount = 376;
 async function scheduleAlbumCoverTransmit() {
-  if (!latestImageUrl) {
+  messageQue = [];
+  if (latestScaleSize != imageScale) {
+    latestScaleSize = imageScale;
     queMessage(
       {
         type: "execute-lua-script",
-        script: `image_transmit(0, "")`,
+        script: `setscale(${latestScaleSize})`,
       },
       false,
     );
-    return;
   }
+  queMessage(
+    {
+      type: "execute-lua-script",
+      script: `sit(0, "")`,
+    },
+    false,
+  );
+
   let image = await Jimp.read(latestImageUrl);
+  let highQualityImage;
+  if (streamInHigherQuality) {
+    highQualityImage = image.clone();
+  }
+
+  const imageSize = 120 / latestScaleSize;
   image.resize({ w: imageSize, h: imageSize });
 
   imageString = "";
@@ -313,31 +347,62 @@ async function scheduleAlbumCoverTransmit() {
     }
   }
 
-  imageIndex = 0;
-  transmitImageChunk();
-}
+  let imageIndex = 0;
+  let imagePart = "";
+  do {
+    imagePart = imageString.substring(
+      imageIndex * maxCharacterCount,
+      (imageIndex + 1) * maxCharacterCount,
+    );
+    queMessage(
+      {
+        type: "execute-lua-script",
+        script: `sit(${imageIndex},"${imagePart}")`,
+      },
+      false,
+    );
+    imageIndex++;
+  } while (imagePart.length == maxCharacterCount);
 
-let imageIndex = 0;
-let imageTransmitTimeoutId;
-const maxCharacterCount = 376;
-function transmitImageChunk() {
-  clearTimeout(imageTransmitTimeoutId);
-
-  let imagePart = imageString.substring(
-    imageIndex * maxCharacterCount,
-    (imageIndex + 1) * maxCharacterCount,
-  );
-
-  queMessage(
-    {
+  if (streamInHigherQuality && latestScaleSize != 1) {
+    latestScaleSize = 1;
+    queMessage({
       type: "execute-lua-script",
-      script: `sit(${imageIndex},"${imagePart}")`,
-    },
-    false,
-  );
-  imageIndex++;
-  if (imagePart.length == maxCharacterCount) {
-    imageTransmitTimeoutId = setTimeout(transmitImageChunk, 343);
+      script: `setscale(${latestScaleSize})`,
+    });
+
+    const highImageSize = 120;
+    highQualityImage.resize({ w: highImageSize, h: highImageSize });
+
+    imageString = "";
+    for (let i = 0; i < highImageSize; i++) {
+      for (let j = 0; j < highImageSize; j++) {
+        let pixel = highQualityImage.getPixelColor(j, i);
+        const r = (pixel >> 24) & 0xff;
+        const g = (pixel >> 16) & 0xff;
+        const b = (pixel >> 8) & 0xff;
+
+        const buffer = Buffer.from([r, g, b]);
+
+        imageString += buffer.toString("base64");
+      }
+    }
+
+    imageIndex = 0;
+    do {
+      imagePart = imageString.substring(
+        imageIndex * maxCharacterCount,
+        (imageIndex + 1) * maxCharacterCount,
+      );
+      queMessage(
+        {
+          type: "execute-lua-script",
+          script: `sit(${imageIndex},"${imagePart}")`,
+        },
+        false,
+      );
+      imageIndex++;
+    } while (imagePart.length == maxCharacterCount);
   }
 }
 
@@ -361,7 +426,9 @@ async function fetchCurrentPlaybackState() {
     let trackImage = (currentState?.item?.album?.images ?? [])[0]?.url;
     if (latestImageUrl != trackImage) {
       latestImageUrl = trackImage;
-      scheduleAlbumCoverTransmit();
+      if (automaticallySendImage) {
+        scheduleAlbumCoverTransmit();
+      }
     }
   } catch (e) {
     console.error(e);
@@ -404,9 +471,35 @@ async function onPreferenceMessage(data) {
     userEmail = "";
     controller.sendMessageToEditor({
       type: "persist-data",
-      data: undefined,
+      data: {
+        refreshToken: undefined,
+        messageQueTimeout,
+        imageScale,
+        automaticallySendImage,
+        streamInHigherQuality,
+      },
     });
     notifyPreference();
+  }
+  if (data.type === "send-image") {
+    scheduleAlbumCoverTransmit();
+  }
+  if (data.type === "save-properties") {
+    messageQueTimeout = data.messageQueTimeout;
+    imageScale = data.imageScale;
+    automaticallySendImage = data.automaticallySendImage;
+    streamInHigherQuality = data.streamInHigherQuality;
+
+    controller.sendMessageToEditor({
+      type: "persist-data",
+      data: {
+        refreshToken: spotifyApi.getRefreshToken(),
+        messageQueTimeout,
+        imageScale,
+        automaticallySendImage,
+        streamInHigherQuality,
+      },
+    });
   }
 }
 
@@ -416,6 +509,10 @@ function notifyPreference() {
   preferencePort.postMessage({
     type: "status",
     email: userEmail,
+    messageQueTimeout,
+    imageScale,
+    automaticallySendImage,
+    streamInHigherQuality,
   });
 }
 
@@ -448,6 +545,10 @@ async function refreshSpotifyToken() {
       type: "persist-data",
       data: {
         refreshToken: response.refresh_token,
+        messageQueTimeout,
+        imageScale,
+        automaticallySendImage,
+        streamInHigherQuality,
       },
     });
   }
@@ -516,6 +617,10 @@ async function authorizeSpotify() {
             type: "persist-data",
             data: {
               refreshToken: response.refresh_token,
+              messageQueTimeout,
+              imageScale,
+              automaticallySendImage,
+              streamInHigherQuality,
             },
           });
           let result = await spotifyApi.getMe();
