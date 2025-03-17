@@ -292,6 +292,7 @@ function updateEditorPlaybackState() {
     },
     true,
   );
+  notifyPreference();
 }
 
 function increaseTrackProgress() {
@@ -470,6 +471,9 @@ async function onPreferenceMessage(data) {
       },
     });
   }
+  if (data.type == "play-control") {
+    exports.sendMessage(data.args);
+  }
 }
 
 function notifyPreference() {
@@ -482,6 +486,11 @@ function notifyPreference() {
     imageScale,
     automaticallySendImage,
     spotifyFetchIntervalTime,
+    isPlaying,
+    currentTrackName,
+    currentTrackArtist,
+    currentTrackProgress,
+    currentTrackLength,
   });
 }
 

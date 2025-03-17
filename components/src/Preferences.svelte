@@ -17,6 +17,11 @@
   let messageQueTimeout = "180";
   let spotifyFetchIntervalTime = "5000"
   let isInitialized = false;
+  let isPlaying = false;
+  let currentTrackLength = 0;
+  let currentTrackProgress = 0;
+  let currentTrackName = "";
+  let currentTrackArtist = "";
   $: currentlyConnected = (email ?? "") !== "";
 
   $: clientStatusLabel = currentlyConnected ? "Connected" : "Authorize";
@@ -71,6 +76,10 @@
         imageScale = data.imageScale;
         spotifyFetchIntervalTime = String(data.spotifyFetchIntervalTime);
         isInitialized = true;
+        currentTrackArtist = data.currentTrackArtist;
+        currentTrackLength = data.currentTrackLength;
+        currentTrackName = data.currentTrackName;
+        currentTrackProgress = data.currentTrackProgress;
       }
     };
     messagePort.start();
@@ -78,6 +87,19 @@
       messagePort.close();
     };
   });
+
+  function sendSpotifyControl(event){
+    messagePort.postMessage({
+        type: "play-control",
+        args: ["playstate", event]
+      });
+  }
+
+  function formatPlayTime(time){
+    let seconds = time % 60;
+    let minutes = Math.floor(time / 60);
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`
+  }
 </script>
 
 <main-app>
@@ -102,6 +124,28 @@
           Signed in as: {email}
         </BlockBody>
         <MoltenPushButton snap="full" text="Sign out" click={logoutUser} />
+        <BlockTitle>
+          Currently playing
+        </BlockTitle>
+        <BlockBody>
+          <div class="text-white flex flex-row">
+            <div class="grow">
+            {currentTrackName} 
+            </div>  
+            {#if currentTrackLength != 0}
+              {formatPlayTime(currentTrackProgress)} / {formatPlayTime(currentTrackLength)}
+            {/if}       
+          </div>
+          <div class="text-sm text-gray-400">
+            {currentTrackArtist}
+          </div>
+          <div class="flex flex-row">
+            <MoltenPushButton snap="full" text="Prev" click={() => sendSpotifyControl("previous")} />
+            <MoltenPushButton snap="full" text="Pause" click={() => sendSpotifyControl("pause")} />
+            <MoltenPushButton snap="full" text="Play" click={() => sendSpotifyControl("play")} />
+            <MoltenPushButton snap="full" text="Next" click={() => sendSpotifyControl("next")} />
+          </div>
+        </BlockBody>
         
         <BlockTitle>
           Developer Settings
