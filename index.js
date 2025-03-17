@@ -54,6 +54,7 @@ function sendNextMessage() {
   messageQueTimeoutId = undefined;
   let message = messageQue.shift();
   if (!message) return;
+  if (!controller) return;
 
   controller.sendMessageToEditor(message);
   messageQueTimeoutId = setTimeout(sendNextMessage, messageQueTimeout);

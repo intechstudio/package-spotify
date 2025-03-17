@@ -132,7 +132,7 @@
             <div class="grow">
             {currentTrackName} 
             </div>  
-            {#if currentTrackLength != 0}
+            {#if currentTrackLength}
               {formatPlayTime(currentTrackProgress)} / {formatPlayTime(currentTrackLength)}
             {/if}       
           </div>
