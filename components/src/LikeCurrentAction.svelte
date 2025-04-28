@@ -16,10 +16,13 @@
     { info: "Toggle", value: "toggle" },
   ];
 
-  let playlistSuggestions = []
+  let playlistSuggestions = [];
 
   // @ts-ignore
-  const messagePort = createPackageMessagePort("package-spotify", "like-action");
+  const messagePort = createPackageMessagePort(
+    "package-spotify",
+    "like-action",
+  );
 
   function handleConfigUpdate(config) {
     const regex = /^gps\("package-spotify", "*(.*?)", "*(.*?)"\)$/;
@@ -43,9 +46,9 @@
       const data = e.data;
       if (data.type === "playlists") {
         playlistSuggestions = [
-          {info: "Liked Songs", value: "liked"},
+          { info: "Liked Songs", value: "liked" },
           ...data.playlistSuggestions,
-        ]
+        ];
       }
     };
     messagePort.start();
@@ -57,7 +60,9 @@
     };
   });
 
-  $: eventId && playlistId && function () {
+  $: eventId &&
+    playlistId &&
+    (function () {
       var code = `gps("package-spotify", "${eventId}", "${playlistId}")`;
       if (currentCodeValue != code) {
         currentCodeValue = code;
@@ -69,7 +74,7 @@
           ref.dispatchEvent(event);
         }
       }
-    }();
+    })();
 </script>
 
 <spotify-likecurrent
@@ -78,13 +83,13 @@
 >
   <div class="w-full flex">
     <div style="width: 30%; padding-right: 0.5rem">
-    <MeltCombo
-      title={"Action"}
-      bind:value={eventId}
-      {suggestions}
-      searchable={true}
-      size={"full"}
-    />
+      <MeltCombo
+        title={"Action"}
+        bind:value={eventId}
+        {suggestions}
+        searchable={true}
+        size={"full"}
+      />
     </div>
     <MeltCombo
       title={"Playlist"}

@@ -304,7 +304,7 @@ function increaseTrackProgress() {
 
 let imageString;
 let latestScaleSize = undefined;
-const maxCharacterCount = 376;
+const maxCharacterCount = 280;
 async function scheduleAlbumCoverTransmit() {
   messageQue = [];
   queMessage(
