@@ -76,16 +76,20 @@ exports.loadPackage = async function (gridController, persistedData) {
       persistedData.spotifyFetchIntervalTime ?? 5 * 1000;
 
     spotifyApi.setRefreshToken(persistedData.refreshToken);
-    try {
-      await refreshSpotifyToken();
-      let me = await spotifyApi.getMe();
-      userEmail = me.body.email;
-      notifyPreference();
-      refreshTokenIntervalId = setInterval(refreshSpotifyToken, 1000 * 60 * 50);
-      fetchCurrentPlaybackState();
-    } catch (e) {
-      console.error(e);
-    }
+    refreshSpotifyToken()
+      .then(async () => {
+        let me = await spotifyApi.getMe();
+        userEmail = me.body.email;
+        notifyPreference();
+        refreshTokenIntervalId = setInterval(
+          refreshSpotifyToken,
+          1000 * 60 * 50,
+        );
+        fetchCurrentPlaybackState();
+      })
+      .catch((e) => {
+        console.error(e);
+      });
   }
 
   gridController.sendMessageToEditor({

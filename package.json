@@ -17,7 +17,10 @@
   "license": "ISC",
   "grid_editor": {
     "componentsPath": "components/dist/components.js",
-    "preferenceComponent": "spotify-preference"
+    "preferenceComponent": "spotify-preference",
+    "shortDescription": "Control Spotify playback through Grid modules.",
+    "mainIcon": "spotify-main-logo.svg",
+    "menuIcon": "spotify-white-icon.svg"
   },
   "dependencies": {
     "jimp": "^1.6.0",
