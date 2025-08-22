@@ -22,6 +22,8 @@
   let currentTrackProgress = 0;
   let currentTrackName = "";
   let currentTrackArtist = "";
+  let clientId = "";
+
   $: currentlyConnected = (email ?? "") !== "";
 
   $: clientStatusLabel = currentlyConnected ? "Connected" : "Authorize";
@@ -56,6 +58,7 @@
     messageQueTimeout,
     automaticallySendImage,
     spotifyFetchIntervalTime,
+    clientId,
     saveProperties();
 
   function saveProperties() {
@@ -66,6 +69,7 @@
         messageQueTimeout: Number(messageQueTimeout),
         automaticallySendImage,
         spotifyFetchIntervalTime: Number(spotifyFetchIntervalTime),
+        clientId,
       });
     }
   }
@@ -79,6 +83,7 @@
         automaticallySendImage = data.automaticallySendImage;
         imageScale = data.imageScale;
         spotifyFetchIntervalTime = String(data.spotifyFetchIntervalTime);
+        clientId = data.clientId;
         isInitialized = true;
         currentTrackArtist = data.currentTrackArtist;
         currentTrackLength = data.currentTrackLength;
@@ -200,7 +205,38 @@
           />
         </BlockBody>
       {:else}
-        <MoltenPushButton snap="full" text="Authorize" click={authorizeUser} />
+        <BlockBody>
+          <div class="flex flex-col w-full">
+            <p>Create app</p>
+            <ol class="text-white px-4 py-2" style="list-style: decimal;">
+              <li>
+                <MoltenPushButton
+                  text={"Spotify Developer Login"}
+                  click={() => window.open("https://developer.spotify.com/")}
+                />
+              </li>
+              <li class="pt-2">
+                <a
+                  target="_blank"
+                  class="pb-2 text-blue-500 hover:text-white"
+                  href="https://github.com/intechstudio/package-spotify/blob/main/guide/app_guide.md"
+                  >Follow the guide to create an app</a
+                >
+              </li>
+            </ol>
+            <div class="bg-primary mb-2" style="height: 2px" />
+            <MeltCombo
+              bind:value={clientId}
+              title="Client ID"
+              placeholder="91ad..."
+            />
+            <MoltenPushButton
+              snap="full"
+              text="Authorize"
+              click={authorizeUser}
+            />
+          </div>
+        </BlockBody>
       {/if}
     </Block>
   </div>

@@ -14,13 +14,10 @@ let preferencePort = undefined;
 
 let polkaServer = undefined;
 
-const clientId = "29315a1d2ed24d78ac871eb8939090fd";
-const redirectUri = "http://localhost:3845/callback";
+let clientId = "29315a1d2ed24d78ac871eb8939090fd";
+const redirectUri = "http://127.0.0.1:3845/callback";
 
-const spotifyApi = new SpotifyWebApi({
-  clientId: clientId,
-  redirectUri: redirectUri,
-});
+let spotifyApi = undefined;
 let userEmail = "";
 let refreshTokenIntervalId;
 
@@ -72,8 +69,14 @@ exports.loadPackage = async function (gridController, persistedData) {
     messageQueTimeout = persistedData.messageQueTimeout ?? 180;
     imageScale = persistedData.imageScale ?? "24,12,3,1";
     automaticallySendImage = persistedData.automaticallySendImage ?? false;
+    clientId = persistedData.clientId ?? clientId;
     spotifyFetchIntervalTime =
       persistedData.spotifyFetchIntervalTime ?? 5 * 1000;
+
+    spotifyApi = new SpotifyWebApi({
+      clientId: clientId,
+      redirectUri: redirectUri,
+    });
 
     spotifyApi.setRefreshToken(persistedData.refreshToken);
     refreshSpotifyToken()
@@ -452,6 +455,7 @@ async function onPreferenceMessage(data) {
         imageScale,
         automaticallySendImage,
         spotifyFetchIntervalTime,
+        clientId,
       },
     });
     notifyPreference();
@@ -463,6 +467,13 @@ async function onPreferenceMessage(data) {
     messageQueTimeout = data.messageQueTimeout;
     imageScale = data.imageScale;
     automaticallySendImage = data.automaticallySendImage;
+    if (clientId !== data.clientId) {
+      clientId = data.clientId;
+      spotifyApi = new SpotifyWebApi({
+        clientId: clientId,
+        redirectUri: redirectUri,
+      });
+    }
     spotifyFetchIntervalTime = data.spotifyFetchIntervalTime;
 
     controller.sendMessageToEditor({
@@ -473,6 +484,7 @@ async function onPreferenceMessage(data) {
         imageScale,
         automaticallySendImage,
         spotifyFetchIntervalTime,
+        clientId,
       },
     });
   }
@@ -491,6 +503,7 @@ function notifyPreference() {
     imageScale,
     automaticallySendImage,
     spotifyFetchIntervalTime,
+    clientId,
     isPlaying,
     currentTrackName,
     currentTrackArtist,
@@ -532,6 +545,7 @@ async function refreshSpotifyToken() {
         imageScale,
         automaticallySendImage,
         spotifyFetchIntervalTime,
+        clientId,
       },
     });
   }
@@ -603,6 +617,7 @@ async function authorizeSpotify() {
               messageQueTimeout,
               imageScale,
               automaticallySendImage,
+              clientId,
               spotifyFetchIntervalTime,
             },
           });
