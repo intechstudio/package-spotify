@@ -3,11 +3,9 @@ const path = require("path");
 const polka = require("polka");
 const crypto = require("crypto");
 const SpotifyWebApi = require("spotify-web-api-node");
-const { Jimp, ResizeStrategy } = require("jimp");
 
 let open = undefined;
 
-let isEnabled = false;
 let controller = undefined;
 let messagePorts = new Set();
 let preferencePort = undefined;
@@ -25,37 +23,10 @@ let actionId = 0;
 let updateTrackProgressId;
 
 let latestImageUrl;
-
-let messageQue = [];
-let messageQueTimeoutId = undefined;
-let messageQueTimeout = 180;
-let imageScale = "24,12,3,1";
 let automaticallySendImage = false;
 
 let spotifyFetchTimeoutId = undefined;
 let spotifyFetchIntervalTime = 5 * 1000;
-
-function queMessage(message, priority) {
-  if (priority) {
-    messageQue.unshift(message);
-  } else {
-    messageQue.push(message);
-  }
-  if (messageQueTimeoutId === undefined) {
-    sendNextMessage();
-  }
-}
-
-function sendNextMessage() {
-  clearTimeout(messageQueTimeoutId);
-  messageQueTimeoutId = undefined;
-  let message = messageQue.shift();
-  if (!message) return;
-  if (!controller) return;
-
-  controller.sendMessageToEditor(message);
-  messageQueTimeoutId = setTimeout(sendNextMessage, messageQueTimeout);
-}
 
 exports.loadPackage = async function (gridController, persistedData) {
   controller = gridController;
@@ -144,7 +115,6 @@ exports.loadPackage = async function (gridController, persistedData) {
 exports.unloadPackage = async function () {
   clearInterval(refreshTokenIntervalId);
   clearTimeout(spotifyFetchTimeoutId);
-  clearTimeout(messageQueTimeoutId);
   while (--actionId >= 0) {
     controller.sendMessageToEditor({
       type: "remove-action",
@@ -293,7 +263,7 @@ function updateEditorPlaybackState() {
   if (lastSpotifyStateString == script) return;
 
   lastSpotifyStateString = script;
-  queMessage(
+  controller.sendMessageToEditor(
     {
       type: "execute-lua-script",
       script,
@@ -309,72 +279,18 @@ function increaseTrackProgress() {
   updateEditorPlaybackState();
 }
 
-let imageString;
-let latestScaleSize = undefined;
-const maxCharacterCount = 280;
 async function scheduleAlbumCoverTransmit() {
-  messageQue = [];
-  queMessage(
-    {
-      type: "execute-lua-script",
-      script: `sit(0, "")`,
+  controller.sendMessageToEditor({
+    type: "send-package-message",
+    targetPackageId: "package-image-stream",
+    message: {
+      imagePath: latestImageUrl,
+      x: 0,
+      y: 0,
+      w: 125,
+      h: 125,
     },
-    false,
-  );
-  let image = await Jimp.read(latestImageUrl);
-  let imageScalesArray = [6, 1];
-  try {
-    imageScalesArray = imageScale
-      .split(",")
-      .map((e) => Number(e))
-      .filter((e) => e > 0);
-  } catch (e) {}
-  for (let currScale of imageScalesArray) {
-    if (latestScaleSize != currScale) {
-      latestScaleSize = currScale;
-      queMessage(
-        {
-          type: "execute-lua-script",
-          script: `setscale(${latestScaleSize})`,
-        },
-        false,
-      );
-    }
-    let scaledImage = image.clone();
-    const imageSize = 120 / latestScaleSize;
-    scaledImage.resize({ w: imageSize, h: imageSize });
-
-    imageString = "";
-    for (let i = 0; i < imageSize; i++) {
-      for (let j = 0; j < imageSize; j++) {
-        let pixel = scaledImage.getPixelColor(j, i);
-        const r = (pixel >> 24) & 0xff;
-        const g = (pixel >> 16) & 0xff;
-        const b = (pixel >> 8) & 0xff;
-
-        const buffer = Buffer.from([r, g, b]);
-
-        imageString += buffer.toString("base64");
-      }
-    }
-
-    let imageIndex = 0;
-    let imagePart = "";
-    do {
-      imagePart = imageString.substring(
-        imageIndex * maxCharacterCount,
-        (imageIndex + 1) * maxCharacterCount,
-      );
-      queMessage(
-        {
-          type: "execute-lua-script",
-          script: `sit(${imageIndex},"${imagePart}")`,
-        },
-        false,
-      );
-      imageIndex++;
-    } while (imagePart.length == maxCharacterCount);
-  }
+  });
 }
 
 async function fetchCurrentPlaybackState() {
@@ -451,8 +367,6 @@ async function onPreferenceMessage(data) {
       type: "persist-data",
       data: {
         refreshToken: undefined,
-        messageQueTimeout,
-        imageScale,
         automaticallySendImage,
         spotifyFetchIntervalTime,
         clientId,
@@ -464,8 +378,6 @@ async function onPreferenceMessage(data) {
     scheduleAlbumCoverTransmit();
   }
   if (data.type === "save-properties") {
-    messageQueTimeout = data.messageQueTimeout;
-    imageScale = data.imageScale;
     automaticallySendImage = data.automaticallySendImage;
     if (clientId !== data.clientId) {
       clientId = data.clientId;
@@ -480,8 +392,6 @@ async function onPreferenceMessage(data) {
       type: "persist-data",
       data: {
         refreshToken: spotifyApi.getRefreshToken(),
-        messageQueTimeout,
-        imageScale,
         automaticallySendImage,
         spotifyFetchIntervalTime,
         clientId,
@@ -499,8 +409,6 @@ function notifyPreference() {
   preferencePort.postMessage({
     type: "status",
     email: userEmail,
-    messageQueTimeout,
-    imageScale,
     automaticallySendImage,
     spotifyFetchIntervalTime,
     clientId,

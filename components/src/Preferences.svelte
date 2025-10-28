@@ -12,9 +12,7 @@
   import { onMount } from "svelte";
 
   let email = "";
-  let imageScale = "3";
   let automaticallySendImage = false;
-  let messageQueTimeout = "180";
   let spotifyFetchIntervalTime = "5000";
   let isInitialized = false;
   let isPlaying = false;
@@ -54,9 +52,7 @@
     });
   }
 
-  $: imageScale,
-    messageQueTimeout,
-    automaticallySendImage,
+  $: automaticallySendImage,
     spotifyFetchIntervalTime,
     clientId,
     saveProperties();
@@ -65,8 +61,6 @@
     if (isInitialized) {
       messagePort.postMessage({
         type: "save-properties",
-        imageScale: imageScale,
-        messageQueTimeout: Number(messageQueTimeout),
         automaticallySendImage,
         spotifyFetchIntervalTime: Number(spotifyFetchIntervalTime),
         clientId,
@@ -79,9 +73,7 @@
       const data = e.data;
       if (data.type === "status") {
         email = data.email;
-        messageQueTimeout = String(data.messageQueTimeout);
         automaticallySendImage = data.automaticallySendImage;
-        imageScale = data.imageScale;
         spotifyFetchIntervalTime = String(data.spotifyFetchIntervalTime);
         clientId = data.clientId;
         isInitialized = true;
@@ -191,17 +183,12 @@
           />
           <MoltenPushButton
             snap="full"
-            text="Send Album Image"
+            text="Send Album Image (Requires the Image Stream package!)"
             click={sendImage}
           />
           <MeltCheckbox
-            title="Automatically send image on album change"
+            title="Automatically send image on album change (Requires the Image Stream package!)"
             bind:target={automaticallySendImage}
-          />
-          <MeltCombo title="Scale image" bind:value={imageScale} />
-          <MeltCombo
-            title="Message que timeout"
-            bind:value={messageQueTimeout}
           />
         </BlockBody>
       {:else}
