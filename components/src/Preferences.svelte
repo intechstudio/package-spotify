@@ -21,6 +21,7 @@
   let currentTrackName = "";
   let currentTrackArtist = "";
   let clientId = "";
+  let disablePlaybackUpdate = false;
 
   $: currentlyConnected = (email ?? "") !== "";
 
@@ -53,6 +54,7 @@
   }
 
   $: automaticallySendImage,
+    disablePlaybackUpdate,
     spotifyFetchIntervalTime,
     clientId,
     saveProperties();
@@ -62,6 +64,7 @@
       messagePort.postMessage({
         type: "save-properties",
         automaticallySendImage,
+        disablePlaybackUpdate,
         spotifyFetchIntervalTime: Number(spotifyFetchIntervalTime),
         clientId,
       });
@@ -81,6 +84,7 @@
         currentTrackLength = data.currentTrackLength;
         currentTrackName = data.currentTrackName;
         currentTrackProgress = data.currentTrackProgress;
+        disablePlaybackUpdate = data.disablePlaybackUpdate;
       }
     };
     messagePort.start();
@@ -180,6 +184,10 @@
           <MeltCombo
             title="Spotify fetch interval time"
             bind:value={spotifyFetchIntervalTime}
+          />
+          <MeltCheckbox
+            title="Disable automatic playback state update)"
+            bind:target={disablePlaybackUpdate}
           />
           <MoltenPushButton
             snap="full"

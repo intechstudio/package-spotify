@@ -252,9 +252,11 @@ let currentTrackProgress = undefined;
 let currentTrackLength = undefined;
 let currentTrackLiked = false;
 let isPlaying = false;
+let disablePlaybackUpdate = false;
 
 let lastSpotifyStateString;
 function updateEditorPlaybackState() {
+  if (disablePlaybackUpdate) return;
   if (isPlaying && updateTrackProgressId === undefined) {
     updateTrackProgressId = setTimeout(increaseTrackProgress, 1000);
   }
@@ -387,6 +389,7 @@ async function onPreferenceMessage(data) {
       });
     }
     spotifyFetchIntervalTime = data.spotifyFetchIntervalTime;
+    disablePlaybackUpdate = data.disablePlaybackUpdate;
 
     controller.sendMessageToEditor({
       type: "persist-data",
@@ -395,6 +398,7 @@ async function onPreferenceMessage(data) {
         automaticallySendImage,
         spotifyFetchIntervalTime,
         clientId,
+        disablePlaybackUpdate,
       },
     });
   }
@@ -417,6 +421,7 @@ function notifyPreference() {
     currentTrackArtist,
     currentTrackProgress,
     currentTrackLength,
+    disablePlaybackUpdate,
   });
 }
 
