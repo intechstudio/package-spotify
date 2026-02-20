@@ -23,7 +23,7 @@ let actionId = 0;
 let updateTrackProgressId;
 
 let latestImageUrl;
-let automaticallySendImage = false;
+let automaticallySendImage = true;
 
 let spotifyFetchTimeoutId = undefined;
 let spotifyFetchIntervalTime = 5 * 1000;

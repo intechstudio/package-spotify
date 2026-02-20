@@ -1,6 +1,6 @@
 {
   "name": "package-spotify",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Spotify",
   "main": "index.js",
   "scripts": {

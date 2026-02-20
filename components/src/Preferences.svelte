@@ -12,7 +12,7 @@
   import { onMount } from "svelte";
 
   let email = "";
-  let automaticallySendImage = false;
+  let automaticallySendImage = true;
   let spotifyFetchIntervalTime = "5000";
   let isInitialized = false;
   let isPlaying = false;
